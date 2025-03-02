@@ -1,0 +1,415 @@
+//  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+//  Chapter:      F4.3 Clouds and Image Compositing
+//  Checkpoint:   F43b
+//  Authors:      Txomin Hermosilla, Saverio Francini, Andréa P. Nicolau, 
+//                Michael A. Wulder, Joanne C. White, Nicholas C. Coops, 
+//                Gherardo Chirici
+//  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+// ---------- Section 1 -----------------
+
+// Define the AOI.
+//var country = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017')
+//    .filter(ee.Filter.equals('country_na', 'Colombia'));
+// Define the cloud mask function.
+function maskSrClouds(image) {
+    // Bit 0 - Fill
+    // Bit 1 - Dilated Cloud
+    // Bit 2 - Cirrus
+    // Bit 3 - Cloud
+    // Bit 4 - Cloud Shadow
+    var qaMask = image.select('QA_PIXEL').bitwiseAnd(parseInt('11111',
+        2)).eq(0);
+    var saturationMask = image.select('QA_RADSAT').eq(0);
+
+    return image.updateMask(qaMask)
+        .updateMask(saturationMask);
+}
+// Center the Map. The second parameter is zoom level.
+Map.centerObject(country, 5);
+
+// Define time variables.
+var startDate = '2005-01-01';
+var endDate = '2006-01-01';
+
+var landsat5 = ee.ImageCollection('LANDSAT/LT05/C02/T1_L2');
+
+// Scaling factors for L7.
+function applyScaleFactorsL5(image) {
+    var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-
+        0.2);
+    var thermalBand = image.select('ST_B6').multiply(0.00341802).add(
+        149.0);
+    return image.addBands(opticalBands, null, true)
+        .addBands(thermalBand, null, true);
+}
+
+// Filter collection, apply cloud mask, and scaling factors.
+var landsat5FiltMasked = landsat5
+    .filterBounds(country)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lessThan('CLOUD_COVER', 50))
+    .map(maskSrClouds)
+    .map(applyScaleFactorsL7);
+
+// Create composite.
+var landsat5compositeMasked = landsat5FiltMasked
+    .median()
+    .clip(country);
+
+Map.addLayer(landsat5compositeMasked,
+    {
+        bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+        min: 0,
+        max: 0.2
+    },
+    'L5 composite masked');
+
+// Since Landsat 7 and 8 have different band designations,
+// let's create a function to rename L7 bands to match to L8.
+function rename(image) {
+    return image.select(
+        ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7'],
+        ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7']);
+}
+
+// Apply the rename function.
+var landsat5FiltMaskedRenamed = landsat5FiltMasked.map(rename);
+//  -----------------------------------------------------------------------
+//  CHECKPOINT 
+//  -----------------------------------------------------------------------
+
+// ---------- Section 2 -----------------
+
+// Define Landsat 7 Level 2, Collection 2, Tier 1 collection.
+var landsat7 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2');
+
+// Scaling factors for L7.
+function applyScaleFactorsL7(image) {
+    var opticalBands = image.select('SR_B.').multiply(0.0000275).add(-
+        0.2);
+    var thermalBand = image.select('ST_B6').multiply(0.00341802).add(
+        149.0);
+    return image.addBands(opticalBands, null, true)
+        .addBands(thermalBand, null, true);
+}
+
+// Filter collection, apply cloud mask, and scaling factors.
+var landsat7FiltMasked = landsat7
+    .filterBounds(country)
+    .filterDate(startDate, endDate)
+    .filter(ee.Filter.lessThan('CLOUD_COVER', 50))
+    .map(maskSrClouds)
+    .map(applyScaleFactorsL7);
+
+// Create composite.
+var landsat7compositeMasked = landsat7FiltMasked
+    .median()
+    .clip(country);
+
+Map.addLayer(landsat7compositeMasked,
+    {
+        bands: ['SR_B3', 'SR_B2', 'SR_B1'],
+        min: 0,
+        max: 0.2
+    },
+    'L7 composite masked');
+
+// Since Landsat 7 and 8 have different band designations,
+// let's create a function to rename L7 bands to match to L8.
+function rename(image) {
+    return image.select(
+        ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7']/*,
+        ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7']*/);
+}
+
+// Apply the rename function.
+var landsat7FiltMaskedRenamed = landsat7FiltMasked.map(rename);
+
+
+// Merge Landsat collections.
+var landsat78 = landsat7FiltMaskedRenamed
+    .merge(landsat5FiltMasked.select(
+        ['SR_B1', 'SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B7']))
+    .map(function(img) {
+        return img.toFloat();
+    });
+print('Merged collections', landsat78);
+
+// Create Landsat 7 and 8 image composite and add to the Map.
+var composite = landsat78.median().clip(country); 
+Map.addLayer(composite, {bands: ['SR_B3', 'SR_B2', 'SR_B1'],min: 0,max: 0.2}, 'L7 and L8 composite');
+/////////////////////////////////////////////////////////////////////////////////////
+// Note: Visualized images are not suitable for analysis
+var rgbVis = {
+  min: 0,
+  max: 0.2,
+  bands: ['SR_B3', 'SR_B2', 'SR_B1'], 
+};
+
+var visualized = composite.visualize(rgbVis);
+
+Export.image.toDrive({
+    image: visualized,
+    description: '2005_Composite_Visualized',
+    folder: 'earthengine',
+    fileNamePrefix: 'TNP_composite_visualized_2005',
+    region: country,
+    scale: 30,
+    maxPixels: 1e9
+});
+
+
+////////////////
+////////////////
+var addIndices = function(image) {
+  var ndvi = image.normalizedDifference(['SR_B4', 'SR_B3']).rename(['ndvi']);
+  var ndbi = image.normalizedDifference(['SR_B5', 'SR_B4']).rename(['ndbi']);
+  var mndwi = image.normalizedDifference(['SR_B2', 'SR_B5']).rename(['mndwi']); 
+  var bsi = image.expression(
+      '(( X + Y ) - (A + B)) /(( X + Y ) + (A + B)) ', {
+        'X': image.select('SR_B5'), //swir1
+        'Y': image.select('SR_B3'),  //red
+        'A': image.select('SR_B4'), // nir
+        'B': image.select('SR_B1'), // blue
+  }).rename('bsi');
+  return image.addBands(ndvi).addBands(ndbi).addBands(mndwi).addBands(bsi)
+}
+
+var composite = addIndices(composite);
+print(composite)
+Map.addLayer(composite, {}, 'composite_2000');
+//////////////////////////////////////////////////////////////////////////////
+// Calculate Slope and Elevation
+
+var dataset = ee.ImageCollection('JAXA/ALOS/AW3D30/V3_2');
+var elevation = dataset.select('DSM');
+var elevationVis = {
+  min: 0,
+  max: 5000,
+  palette: ['0000ff', '00ffff', 'ffff00', 'ff0000', 'ffffff']
+};
+//Map.setCenter(138.73, 35.36, 11);
+//Map.addLayer(elevation.map(function(image) {return image.clip(table);}), elevationVis, 'Elevation');
+
+// Reproject an image mosaic using a projection from one of the image tiles,
+// rather than using the default projection returned by .mosaic().
+var proj = elevation.first().select(0).projection();
+var slopeReprojected = ee.Terrain.slope(elevation.mosaic()
+                             .setDefaultProjection(proj));
+//Map.addLayer(slopeReprojected.clip(table), {min: 0, max: 45}, 'Slope');
+
+var elev =elevation.map(function(image) {return image.clip(country);}).mean()
+
+var composite = composite.addBands(elev).addBands(slopeReprojected);
+print(composite)
+////////////////////////////////////////////////////////////////////
+
+
+
+////////////////////////////////////////////////////////////////////
+// Add a random column and split the GCPs into training and validation set
+var gcps = forest.merge(noforest)
+var gcp = gcps.randomColumn()
+
+// This being a simpler classification, we take 60% points
+// for validation. Normal recommended ratio is
+// 70% training, 30% validation
+var trainingGcp = gcp.filter(ee.Filter.lt('random', 0.6));
+var validationGcp = gcp.filter(ee.Filter.gte('random', 0.6));
+
+// Overlay the point on the image to get training data.
+var training = composite.sampleRegions({
+  collection: trainingGcp,
+  properties: ['landcover'],
+  scale: 30,
+  tileScale: 16
+});
+
+// Train a classifier.
+var classifier = ee.Classifier.smileRandomForest(20)
+.train({
+  features: training,  
+  classProperty: 'landcover',
+  inputProperties: composite.bandNames()
+});
+
+// Classify the image.
+var classified = composite.classify(classifier);
+
+Map.addLayer(classified, {min: 0, max: 1, palette: [ 'green','red']}, '2000');
+Export.image.toDrive({
+    image: classified,
+    description: 'TNP_classified',
+    fileNamePrefix: 'TNP_classified',
+    region: table,
+    scale: 30,
+    maxPixels: 1e9
+})
+////////////////////////////////////////////////////////////////////
+// Area Calculation for Images
+var forest = classified.eq(0)
+// If the image contains values 0 or 1, we can calculate the
+// total area using reduceRegion() function
+
+// The result of .eq() operation is a binary image with pixels
+// values of 1 where the condition matched and 0 where it didn't
+Map.addLayer(forest, {min:0, max:1, palette: ['white', 'green']}, 'Green Cover')
+
+// Since our image has only 0 and 1 pixel values, the vegetation
+// pixels will have values equal to their area
+var areaImage = forest.multiply(ee.Image.pixelArea())
+
+
+// Now that each pixel for vegetation class in the image has the value
+// equal to its area, we can sum up all the values in the region
+// to get the total green cover.
+
+var area = areaImage.reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: table.geometry(),
+  scale: 30,
+  tileScale : 4,
+  maxPixels: 1e10
+  })
+print(area)
+// The result of the reduceRegion() function is a dictionary with the key
+// being the band name. We can extract the area number and convert it to
+// square kilometers
+var forestAreaSqKm = ee.Number(area.get('classification')).divide(1e4).round()
+print('forest area hectares :',forestAreaSqKm)
+
+// .area() function calculates the area in square meters
+var cityArea = table.geometry().area()
+
+// We can cast the result to a ee.Number() and calculate the
+// area in square kilometers
+var cityAreaSqKm = ee.Number(cityArea).divide(1e4).round()
+print('Park area hectares:', cityAreaSqKm)
+//************************************************************************** 
+// Accuracy Assessment
+//************************************************************************** 
+
+// Use classification map to assess accuracy using the validation fraction
+// of the overall training set created above.
+var test = classified.sampleRegions({
+  collection: validationGcp,
+  properties: ['landcover'],
+  tileScale: 16,
+  scale: 30,
+});
+
+var testConfusionMatrix = test.errorMatrix('landcover', 'classification')
+// Printing of confusion matrix may time out. Alternatively, you can export it as CSV
+print('Confusion Matrix', testConfusionMatrix);
+print('Test Accuracy', testConfusionMatrix.accuracy());
+print('kappa', testConfusionMatrix.kappa());
+print('producersAccuracy', testConfusionMatrix.producersAccuracy());
+print('usersAccuracy', testConfusionMatrix.consumersAccuracy());
+//************************************************************************** 
+// Feature Importance
+//************************************************************************** 
+
+// Run .explain() to see what the classifer looks like
+print(classifier.explain())
+
+// Calculate variable importance
+var importance = ee.Dictionary(classifier.explain().get('importance'))
+
+// Calculate relative importance
+var sum = importance.values().reduce(ee.Reducer.sum())
+
+var relativeImportance = importance.map(function(key, val) {
+   return (ee.Number(val).multiply(100)).divide(sum)
+  })
+print(relativeImportance)
+
+// Create a FeatureCollection so we can chart it
+var importanceFc = ee.FeatureCollection([
+  ee.Feature(null, relativeImportance)
+])
+
+var chart = ui.Chart.feature.byProperty({
+  features: importanceFc
+}).setOptions({
+      title: 'Feature Importance',
+      vAxis: {title: 'Importance'},
+      hAxis: {title: 'Feature'}
+  })
+print(chart)
+
+//************************************************************************** 
+// Hyperparameter Tuning
+//************************************************************************** 
+
+var test = composite.sampleRegions({
+  collection: validationGcp,
+  properties: ['landcover'],
+  scale: 30,
+  tileScale: 16
+});
+
+
+// Tune the numberOfTrees parameter.
+var numTreesList = ee.List.sequence(10, 150, 10);
+
+var accuracies = numTreesList.map(function(numTrees) {
+  var classifier = ee.Classifier.smileRandomForest(numTrees)
+      .train({
+        features: training,
+        classProperty: 'landcover',
+        inputProperties: composite.bandNames()
+      });
+
+  // Here we are classifying a table instead of an image
+  // Classifiers work on both images and tables
+  return test
+    .classify(classifier)
+    .errorMatrix('landcover', 'classification')
+    .accuracy();
+});
+
+var chart = ui.Chart.array.values({
+  array: ee.Array(accuracies),
+  axis: 0,
+  xLabels: numTreesList
+  }).setOptions({
+      title: 'Hyperparameter Tuning for the numberOfTrees Parameters',
+      vAxis: {title: 'Validation Accuracy'},
+      hAxis: {title: 'Number of Tress', gridlines: {count: 15}}
+  });
+print(chart)
+
+// Tuning Multiple Parameters
+// We can tune many parameters together using
+// nested map() functions
+// Let's tune 2 parameters
+// numTrees and bagFraction 
+var numTreesList = ee.List.sequence(10, 150, 10);
+var bagFractionList = ee.List.sequence(0.1, 0.9, 0.1);
+
+var accuracies = numTreesList.map(function(numTrees) {
+  return bagFractionList.map(function(bagFraction) {
+     var classifier = ee.Classifier.smileRandomForest({
+       numberOfTrees: numTrees,
+       bagFraction: bagFraction
+     })
+      .train({
+        features: training,
+        classProperty: 'landcover',
+        inputProperties: composite.bandNames()
+      });
+
+    // Here we are classifying a table instead of an image
+    // Classifiers work on both images and tables
+    var accuracy = test
+      .classify(classifier)
+      .errorMatrix('landcover', 'classification')
+      .accuracy();
+    return ee.Feature(null, {'accuracy': accuracy,
+      'numberOfTrees': numTrees,
+      'bagFraction': bagFraction})
+  })
+}).flatten()
+var resultFc = ee.FeatureCollection(accuracies)
+
