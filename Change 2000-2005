@@ -1,0 +1,87 @@
+// Reclassify from 0-3 to 1-4
+var beforeClasses = beforeClasses.remap([0, 1], [1, 2]);
+var afterClasses = afterClasses.remap([0, 1], [1, 2]);
+
+// Show all changed areas
+var changed = afterClasses.subtract(beforeClasses).neq(0);
+Map.addLayer(changed.clip(geometry), {min:0, max:1, palette: ['white', 'red']}, 'Change');
+
+// We multiply the before image with 100 and add the after image
+// The resulting pixel values will be unique and will represent each unique transition
+// i.e. 102 is urban to bare, 103 urban to water etc.
+var merged = beforeClasses.multiply(100).add(afterClasses).rename('transitions');
+
+// Use a frequencyHistogram to get a pixel count per class
+var transitionMatrix = merged.reduceRegion({
+  reducer: ee.Reducer.frequencyHistogram(), 
+  geometry: geometry,
+  maxPixels: 1e10,
+  scale:30,
+  tileScale: 16
+});
+// This prints number of pixels for each class transition
+print(transitionMatrix.get('transitions'));
+
+// If we want to calculate the area of each class transition
+// we can use a grouped reducer
+
+// Divide by 1e6 to get the area in sq.km.
+var areaImage = ee.Image.pixelArea().divide(1e4).addBands(merged);
+// Calculate Area by each Transition Class
+// using a Grouped Reducer
+var areas = areaImage.reduceRegion({
+      reducer: ee.Reducer.sum().group({
+      groupField: 1,
+      groupName: 'transitions',
+    }),
+    geometry: geometry,
+    scale: 30,
+    tileScale: 4,
+    maxPixels: 1e10
+    }); 
+
+// Post-process the result to generate a clean output
+var classAreas = ee.List(areas.get('groups'));
+var classAreaLists = classAreas.map(function(item) {
+      var areaDict = ee.Dictionary(item);
+      var classNumber = ee.Number(areaDict.get('transitions')).format();
+      var area = ee.Number(areaDict.get('sum')).round();
+      return ee.List([classNumber, area]);
+    });
+var classTransitionsAreaDict = ee.Dictionary(classAreaLists.flatten());
+print(classTransitionsAreaDict);
+
+
+
+// Define colors for specific transitions
+var forestToforest = merged.eq(101).selfMask().visualize({palette: 'white'});    // Urban to Bare
+var forestTonoforest = merged.eq(102).selfMask().visualize({palette: 'red'});   // Urban to Water
+var noforestToforest = merged.eq(201).selfMask().visualize({palette: 'blue'});   // Bare to Urban
+var noforestTonoforest = merged.eq(202).selfMask().visualize({palette: 'white'});   // Bare to Bare (No change)
+
+// Combine all transition layers into a single composite using blend()
+var transitionComposite = ee.ImageCollection([
+  forestToforest, forestTonoforest, noforestToforest, noforestTonoforest
+]).mosaic();  // mosaic() merges them, giving each transition a unique color
+
+// Add the composite layer to the map
+Map.addLayer(transitionComposite.clip(geometry), {}, 'Transition Classes');
+Export.image.toDrive({
+    image: changed,
+    description: 'merged',
+    folder: 'earthengine',
+    fileNamePrefix: 'merged',
+    region: geometry,
+    scale: 30,
+    maxPixels: 1e9
+});
+Export.image.toDrive({
+    image: transitionComposite,
+    description: 'transition90_95',
+    folder: 'earthengine',
+    fileNamePrefix: 'transition90_95',
+    region: geometry,
+    scale: 30,
+    maxPixels: 1e9
+});
+
